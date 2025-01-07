@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Defect Throughput</title>
+    <script type="text/javascript" src="/apps/2.1/sdk.js"></script>
+    <script type="text/javascript">
+        Rally.onReady(function() {
+            Ext.define('Rally.example.DefectsApp', {
+                extend: 'Rally.app.App',
+                componentCls: 'app',
+            
+                launch: function() {
+                    this.defectsTracker = {
+                        CVDefectsFixed: 0,
+                        CVDefectsCreated: 0,
+                        DefectsFixed: 0,
+                        DefectsCreated: 0,
+                        CVDefectsByProjectFixed: {},
+                        CapacityByProject: {}
+                    };
+                    this.workspaceOID = this.getContext().getWorkspace().ObjectID;
+                    this.releaseName = this.getContext().getTimeboxScope() ? this.getContext().getTimeboxScope().getRecord().get('Name') : undefined;
+                    this.projectOID = this.getContext().getProject().ObjectID;
+
+
+                    if(this.releaseName){
+                        fetch('https://rally1.rallydev.com/slm/webservice/v2.0/defect?workspace=https://rally1.rallydev.com/slm/webservice/v2.0/workspace/'+this.workspaceOID+
+                            '&project=https://rally1.rallydev.com/slm/webservice/v2.x/project/'+this.projectOID+
+                            '&query=((Release.Name%20=%20%22'+this.releaseName+'%22)%20AND%20(ScheduleState%20>%3D%20"Accepted"))&fetch=Project,Name,Tags,c_NumberofCases,FormattedID,PlanEstimate,Requirement,Feature,InvestmentCategory&order=CreationDate&start=1&pagesize=200').then(function(response) {
+                          return response.json();
+                        }).then((dataResults) => {
+                            this._onDefectsFixedLoaded(dataResults.QueryResult.Results);
+                        }).catch(function(err) {
+                            console.log('Fetch Error on fixed defects request: ', err);
+                        });
+                    }
+                },
+
+                _updateDefectsTracker: function(data, category){
+                    Ext.Array.each(data, function(defect){
+                        var isCustomerVoice = false;
+                        if (defect.c_NumberofCases > 0){
+                            isCustomerVoice = true;
+                        } else if (defect.Tags) {
+                            Ext.Array.each(defect.Tags._tagsNameArray, function(tagObject){
+                                if(tagObject.Name === 'Customer Voice'){
+                                    isCustomerVoice = true;
+                                    return false;
+                                }
+                            });
+                        }
+
+                        if (isCustomerVoice){
+                            if(category === 'Fixed'){
+                                this.defectsTracker.CVDefectsFixed = this.defectsTracker.CVDefectsFixed + 1; 
+
+                                if(defect.Requirement && defect.Requirement.Feature && defect.Requirement.Feature.InvestmentCategory === "Defects"){
+                                    if (this.defectsTracker.CVDefectsByProjectFixed[defect.Project.Name]) {
+                                        this.defectsTracker.CVDefectsByProjectFixed[defect.Project.Name] = this.defectsTracker.CVDefectsByProjectFixed[defect.Project.Name] + defect.PlanEstimate;
+                                    } else {
+                                        this.defectsTracker.CVDefectsByProjectFixed[defect.Project.Name] = defect.PlanEstimate;
+                                    }
+                                }
+                            } else if(category === 'Created'){
+                                this.defectsTracker.CVDefectsCreated = this.defectsTracker.CVDefectsCreated + 1;
+                            }
+                        } else {
+                            if(category === 'Fixed'){
+                                this.defectsTracker.DefectsFixed = this.defectsTracker.DefectsFixed + 1;    
+                            } else if(category === 'Created'){
+                                this.defectsTracker.DefectsCreated = this.defectsTracker.DefectsCreated + 1;
+                            }
+                        }
+                     }, this);
+                },
+
+                _onDefectsFixedLoaded: function(defects) {
+                    this._updateDefectsTracker(defects, 'Fixed');
+
+                    var releaseStartDate = Ext.Date.format(this.getContext().getTimeboxScope().getRecord().get('ReleaseStartDate'), 'Y-m-d');
+
+                    fetch('https://rally1.rallydev.com/slm/webservice/v2.0/defect?workspace=https://rally1.rallydev.com/slm/webservice/v2.0/workspace/'+this.workspaceOID+
+                        '&project=https://rally1.rallydev.com/slm/webservice/v2.x/project/'+this.projectOID+
+                        '&query=(CreationDate%20>=%20%22'+releaseStartDate+'%22)&fetch=Tags,c_NumberofCases,FormattedID,Requirement,Feature,InvestmentCategory&order=CreationDate&start=1&pagesize=200').then(function(response) {
+                      return response.json();
+                    }).then((dataResults) => {
+                        this._onDefectsCreatedLoaded(dataResults.QueryResult.Results);
+                    }).catch(function(err) {
+                        console.log('Fetch Error on created defects request: ', err);
+                    });
+                },
+
+                _onDefectsCreatedLoaded: function(defects){
+                    this._updateDefectsTracker(defects, 'Created');
+                    this.add({
+                        xtype: 'rallychart',
+                        loadMask: false,
+                        chartData: this._getChartData(),
+                        chartConfig: this._getChartConfig(),
+                        scope: this                    
+                    });
+                    this._getCapacityByProjectData();                    
+                },
+
+                _getChartConfig: function() {
+                    return {
+                        chart: {
+                            type: 'column'
+                        },
+                        title: {
+                            text: 'Defect Throughput',
+                            align: 'left'
+                        },
+                        legend: {
+                            layout: 'vertical',
+                            backgroundColor: 'white',
+                            align: 'center',
+                            verticalAlign: 'bottom',
+                            floating: false
+                        },
+                        xAxis: {
+                            categories: ['Total Defects Fixed', 'Total Defects Created'],
+                            labels: {
+                                style: {
+                                    fontSize: 14,
+                                    fontWeight: 'bold'
+                                }
+                            }
+                        },
+                        yAxis: {
+                            allowDecimals: false,
+                            min: 0,
+                            title: {
+                                text: 'Count'
+                            },
+                            stackLabels: {
+                                enabled: true,
+                                style: {
+                                    fontSize: 14,
+                                    fontWeight: 'bold'
+                                }
+                            }
+                        },
+                        plotOptions: {
+                            column: {
+                                stacking: 'normal',
+                                dataLabels: {
+                                    enabled: true
+                                }
+                            },
+                            series: {
+                                dataLabels: {
+                                    style: {
+                                        fontSize: 14,
+                                        fontWeight: 'bold'
+                                    }
+                                },
+                            }
+                        }
+                    };
+                },
+
+                _getChartData: function() {
+                    return {
+                        categories: ['Total Defects Fixed', 'Total Defects Created'],
+                        series: [
+                            {
+                                name: 'CV Defects',
+                                data: [this.defectsTracker.CVDefectsFixed, this.defectsTracker.CVDefectsCreated],
+                                color: 'rgb(211, 98, 34)',
+                                dataLabels: {
+                                    style: {
+                                        color: 'white'
+                                    }
+                                } 
+                            },
+                            {
+                                name: 'Defects',
+                                data: [this.defectsTracker.DefectsFixed, this.defectsTracker.DefectsCreated],
+                                color: 'rgb(31, 142, 206)',
+                                dataLabels: {
+                                    style: {
+                                        color: 'white'
+                                    }
+                                }   
+                            }
+                        ]
+                    };
+                },
+
+                _getCapacityByProjectData: function(){
+                    fetch('https://rally1.rallydev.com/slm/webservice/v2.0/capacityplanproject?workspace=https://rally1.rallydev.com/slm/webservice/v2.0/workspace/'+this.workspaceOID+'&project=https://rally1.rallydev.com/slm/webservice/v2.x/project/'+this.projectOID+'&query=(CapacityPlan.Name%20=%20%22'+this.releaseName+'%22)&fetch=PlannedCapacityPoints,Project,Name,CapacityPlan&start=1&pagesize=200').then(function(response) {
+                          return response.json();
+                      }).then((dataResults) => {
+                        var capacityPlanProjects = dataResults.QueryResult.Results;
+                        Ext.Array.each(capacityPlanProjects, function(project){
+                            if (project._objectVersion !== 0) {
+                                this.defectsTracker.CapacityByProject[project.Project.Name] = project.PlannedCapacityPoints;
+                            }
+                        }, this);
+
+                        var categories = Ext.Object.getKeys(this.defectsTracker.CapacityByProject).sort();
+                        let dataSeries = new Array(categories.length).fill(0);
+
+                        Ext.Array.each(categories, function(team, i){
+                            var pointFixed = this.defectsTracker.CVDefectsByProjectFixed[team] || 0;
+                            dataSeries[i] = Math.ceil(pointFixed / this.defectsTracker.CapacityByProject[team] * 100);
+                        }, this);
+
+                        this.add({
+                            xtype: 'rallychart',
+                            loadMask: false,
+                            chartConfig: {
+                                chart: {
+                                    type: 'column'
+                                },
+                                title: {
+                                    text: 'CV Defect Percentages By Team by Capacity Plan Allocation',
+                                    align: 'left'
+                                },
+                                xAxis: {
+                                    crosshair: true,
+                                    accessibility: {
+                                        description: 'Teams'
+                                    },
+                                    labels: {
+                                        style: {
+                                            fontSize: 14,
+                                            fontWeight: 'bold'
+                                        }
+                                    }
+                                },
+                                yAxis: {
+                                      labels: {
+                                        format: '{value}%'
+                                      },
+                                      title: {
+                                        text: 'Percentage'
+                                      }
+                                },
+                                legend: {
+                                    enabled: false
+                                },
+                                plotOptions: {
+                                    column: {
+                                        stacking: 'normal',
+                                        dataLabels: {
+                                            enabled: true
+                                        }
+                                    },
+                                    series: {
+                                        dataLabels: {
+                                            format: '{y}%', 
+                                            style: {
+                                                color: 'white',
+                                                fontSize: 14,
+                                                fontWeight: 'bold'
+                                            }
+                                        },
+                                    }
+                                }
+                            },
+                            chartData: {
+                                categories: categories,
+                                series: [
+                                    {
+                                        color: 'rgb(211, 98, 34)',
+                                        data: dataSeries,
+                                        name: 'Percentage'
+                                    }
+                                ]
+                            }                  
+                        });
+                      }).catch(function(err) {
+                        console.log('Fetch Error on capacity plan projects request: ', err);
+                      });
+                }
+
+
+            });
+            
+
+            Rally.launchApp('Rally.example.DefectsApp', {
+              name: 'Defect Throughput App'
+            });
+        });
+    </script>
+    <style type="text/css"></style>
+</head>
+<body>
+</body>
+</html>
