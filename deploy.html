@@ -83,7 +83,7 @@ const loadWsapiData = (type,params) => {
 }
 
 const loadCapacityByProjectFromCapacityPlan = (capacityPlanName) => {
-    const capacityPlanQuery = `((CapacityPlan.Name = "${capacityPlanName}") AND (Assignments.CapacityPlanItem.PortfolioItem.InvestmentCategory = "Defects"))`;
+    const capacityPlanQuery = `((CapacityPlan.Name = "${capacityPlanName}") AND (Assignments.CapacityPlanItem.PortfolioItem.InvestmentCategory = "Defects L2-L3"))`;
     const capacityPlanFetch = "PlannedCapacityPoints,Project,Name,CapacityPlan"; //todo, do we also get count? 
     var cpUrl = `${$RallyContext.Url.origin}/slm/webservice/v2.0/capacityplanproject?workspace=${$RallyContext.GlobalScope.Workspace._ref}&project=${$RallyContext.GlobalScope.Project._ref}&query=${capacityPlanQuery}&fetch=${capacityPlanFetch}`
 
@@ -166,7 +166,7 @@ const transformData = (results) => {
 
     var totalByProject = {};  
     defectData.forEach(d => {
-        if (d.Requirement && d.Requirement.Feature && d.Requirement.Feature.InvestmentCategory == "Defects"){
+        if (d.Requirement && d.Requirement.Feature && d.Requirement.Feature.InvestmentCategory == "Defects L2-L3"){
             if ((!totalByProject[d.Project.Name])){
                 totalByProject[d.Project.Name] = 0;
             }
